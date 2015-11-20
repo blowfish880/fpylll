@@ -52,20 +52,29 @@ def stretch_vector(v, n):
 def vector_norm(v):
     return sqrt(sum([x**2 for x in v]))
 
-def test_pruning(A, pruning_vectors):
+
+def test_pruning(A, pruning_vectors, gh_bound=True):
     l = []
     LLL.reduction(A)
+    m = GSO.Mat(A)
+    m.update_gso()
+
+    max_dist, expo = m.get_r_exp(0, 0)
+    if gh_bound:
+        max_dist, expo = m.compute_gaussian_heuristic_distance(0, A.nrows, max_dist, expo, 1.00)
+    max_dist = int(round(max_dist * 2**expo))
+
     for i, pruning_vector in enumerate(pruning_vectors):
         B = copy(A)
         t = time.clock()
-        v = SVP.shortest_vector(B, pruning=pruning_vector, run_lll=False)
+        v = SVP.shortest_vector(B, max_dist=max_dist, pruning=pruning_vector, run_lll=False)
         t = time.clock() - t
         print "%3d: |v|: %.2f, t: %.2f"%(i, vector_norm(v), t)
         l.append(v)
     return l
 
 
-def test_linear_pruning(A):
+def test_linear_pruning(A, gh_bound=True):
     n = A.nrows
     pruning_vectors = []
     pruning_vectors.append([1.0 for _ in range(n)])
@@ -73,10 +82,10 @@ def test_linear_pruning(A):
     for i in range(1,n):
         pruning_vectors.append(BKZ.Param(n, pruning=i).pruning)
 
-    test_pruning(A, pruning_vectors[::-1])
+    test_pruning(A, pruning_vectors[::-1], gh_bound=gh_bound)
 
 
-def test_bkz_2_pruning(A):
+def test_bkz_2_pruning(A, gh_bound=True):
     pruning_vectors = []
     n = A.nrows
     for i in range(1,len(bkz_2_ntl_pruning)):
@@ -86,5 +95,4 @@ def test_bkz_2_pruning(A):
         v = stretch_vector(v, n)
         pruning_vectors.append(v)
 
-    return test_pruning(A, pruning_vectors)
-
+    return test_pruning(A, pruning_vectors, gh_bound=gh_bound)
