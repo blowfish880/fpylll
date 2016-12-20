@@ -118,7 +118,7 @@ class BKZReduction(BKZBase):
                                     probability=pruning.probability,
                                     full=block_size==param.block_size):
                     solution, max_dist = enum_obj.enumerate(kappa, kappa + block_size, radius, expo,
-                                                            pruning=pruning.coefficients, dual=dual)
+                                                            pruning=pruning.coefficients, dual=dual)[0]
                 with tracer.context("postprocessing"):
                     if dual:
                         self.dsvp_postprocessing(kappa, block_size, solution)
