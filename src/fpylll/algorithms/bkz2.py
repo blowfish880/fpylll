@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from random import randint
+from math import floor
 from fpylll import BKZ, Enumeration, EnumerationError
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz_stats import dummy_tracer
@@ -72,7 +73,7 @@ class BKZReduction(BKZBase):
 
         return clean
 
-    def svp_reduction(self, kappa, block_size, param, tracer=dummy_tracer):
+    def svp_reduction(self, kappa, block_size, param, tracer=dummy_tracer, dual=False):
         """
 
         :param kappa:
@@ -82,8 +83,9 @@ class BKZReduction(BKZBase):
 
         """
 
-        self.lll_obj.size_reduction(0, kappa+1)
-        old_first, old_first_expo = self.M.get_r_exp(kappa, kappa)
+        first = kappa + block_size - 1 if dual else kappa;
+        self.lll_obj.size_reduction(0, first+1)
+        old_first, old_first_expo = self.M.get_r_exp(first, first)
 
         remaining_probability, rerandomize = 1.0, False
 
@@ -96,10 +98,14 @@ class BKZReduction(BKZBase):
                 with tracer.context("reduction"):
                     self.svp_preprocessing(kappa, block_size, param, tracer=tracer)
 
-            radius, expo = self.M.get_r_exp(kappa, kappa)
+            radius, expo = self.M.get_r_exp(first, first)
+            if dual:
+                radius = 1/radius
+                expo *= -1
             radius *= self.lll_obj.delta
 
             if param.flags & BKZ.GH_BND and block_size > 30:
+                #TODO: what to do if dual?
                 root_det = self.M.get_root_det(kappa, kappa + block_size)
                 radius, expo = gaussian_heuristic(radius, expo, block_size, root_det, param.gh_factor)
 
@@ -112,9 +118,12 @@ class BKZReduction(BKZBase):
                                     probability=pruning.probability,
                                     full=block_size==param.block_size):
                     solution, max_dist = enum_obj.enumerate(kappa, kappa + block_size, radius, expo,
-                                                            pruning=pruning.coefficients)
+                                                            pruning=pruning.coefficients, dual=dual)
                 with tracer.context("postprocessing"):
-                    self.svp_postprocessing(kappa, block_size, solution, tracer=tracer)
+                    if dual:
+                        self.dsvp_postprocessing(kappa, block_size, solution)
+                    else:
+                        self.svp_postprocessing(kappa, block_size, solution, tracer=tracer)
                 rerandomize = False
 
             except EnumerationError:
@@ -122,8 +131,54 @@ class BKZReduction(BKZBase):
 
             remaining_probability *= (1 - pruning.probability)
 
-        self.lll_obj.size_reduction(0, kappa+1)
-        new_first, new_first_expo = self.M.get_r_exp(kappa, kappa)
+        self.lll_obj.size_reduction(0, first+1)
+        new_first, new_first_expo = self.M.get_r_exp(first, first)
 
-        clean = old_first <= new_first * 2**(new_first_expo - old_first_expo)
+        if dual :
+            clean = old_first >= new_first * 2**(new_first_expo - old_first_expo)
+        else:
+            clean = old_first <= new_first * 2**(new_first_expo - old_first_expo)
         return clean
+
+    def euclid(self, pair1, pair2):
+        """For input (x1,y1) and (x2,y2) compute the GCD of x1 and x2 while 
+        also applying the operations on vectors y1 and y2.
+
+        :param pair1: first input to GCD
+        :param pair2: second input to GCD
+        :returns: the GCD of x1 and x2 and the correspndinig 
+        :rtype:
+
+        """
+        row1, x1 = pair1
+        row2, x2 = pair2
+        if not x1:
+            return pair2
+        c = floor(x2/x1)
+        self.M.row_addmul(row2, row1, -c)
+        return self.euclid((row2, x2 - c*x1), pair1)
+
+    def dsvp_postprocessing(self, kappa, block_size, solution):
+        """Insert DSVP solution into basis and LLL reduce.
+
+        :param solution: coordinates of a DSVP solution
+        :param kappa: current index
+        :param block_size: block size
+        :param stats: object for maintaining statistics
+
+        :returns: ``True`` if no change was made and ``False`` otherwise
+        """
+        if solution is None:
+            return True
+
+        with self.M.row_ops(kappa, kappa+block_size):
+            pairs = list(enumerate(solution, start=kappa))
+            [self.M.negate_row(pair[0]) for pair in pairs if pair[1] < 0]
+            pairs = map(lambda x: (x[0], abs(x[1])), pairs)
+            # GCD should be tree based but for proof of concept implementation, this will do
+            row, x = reduce(self.euclid, pairs)
+            if x != 1:
+                raise RuntimeError("Euclid failed!")
+            self.M.move_row(row, kappa + block_size - 1)
+
+        return False
